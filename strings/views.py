@@ -124,27 +124,39 @@ class StringListCreateView(generics.ListCreateAPIView):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
 
-        # 3️⃣ Duplicate check
-        sha256_hash = hashlib.sha256(value.encode()).hexdigest()
-        if AnalyzedString.objects.filter(sha256_hash=sha256_hash).exists():
+        # 3️⃣ Clean up extra whitespace
+        value = value.strip()
+        if not value:
             return Response(
-                {"error": "String already exists in the system"},
+                {"error": "'value' cannot be empty."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        # 4️⃣ Duplicate check
+        sha256_hash = hashlib.sha256(value.encode()).hexdigest()
+        if AnalyzedString.objects.filter(id=sha256_hash).exists():
+            return Response(
+                {"error": "String already exists in the system."},
                 status=status.HTTP_409_CONFLICT
             )
 
-        # 4️⃣ Create new record
         try:
-            analyzed_string = AnalyzedString(value=value)
-            analyzed_string.save()  # model handles property calculations
+            # Calculate all properties first
+            props = AnalyzedString.calculate_properties(value)
+
+            # Create and save object
+            analyzed_string = AnalyzedString.objects.create(value=value, **props)
 
             response_serializer = AnalyzedStringSerializer(analyzed_string)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            # Safer catch block
             return Response(
-                {"error": str(e)},
+                {"error": f"Internal Server Error: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 
 
@@ -183,10 +195,7 @@ class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
             )
 
         obj.delete()
-        return Response(
-            {'message': f"'{string_value}' deleted successfully."},
-            status=status.HTTP_200_OK
-        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 
