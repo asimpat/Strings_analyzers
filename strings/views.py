@@ -9,13 +9,8 @@ from .serializers import (
     StringListSerializer
 )
 import re
-import hashlib
-
-
-
 from hashlib import sha256
 from collections import Counter
-import json
 
 
 class StringListCreateView(generics.ListCreateAPIView):
@@ -23,7 +18,6 @@ class StringListCreateView(generics.ListCreateAPIView):
     GET /strings - List all strings with filters
     POST /strings - Create and analyze a new string
     """
-
     serializer_class = StringListSerializer
     queryset = AnalyzedString.objects.all()
 
@@ -72,13 +66,14 @@ class StringListCreateView(generics.ListCreateAPIView):
         params = request.query_params
 
         if params.get('is_palindrome'):
-            filters_applied['is_palindrome'] = params['is_palindrome']
+            filters_applied['is_palindrome'] = params['is_palindrome'].lower(
+            ) == 'true'
         if params.get('min_length'):
-            filters_applied['min_length'] = params['min_length']
+            filters_applied['min_length'] = int(params['min_length'])
         if params.get('max_length'):
-            filters_applied['max_length'] = params['max_length']
+            filters_applied['max_length'] = int(params['max_length'])
         if params.get('word_count'):
-            filters_applied['word_count'] = params['word_count']
+            filters_applied['word_count'] = int(params['word_count'])
         if params.get('contains_character'):
             filters_applied['contains_character'] = params['contains_character']
 
@@ -90,64 +85,86 @@ class StringListCreateView(generics.ListCreateAPIView):
 
     def create(self, request, *args, **kwargs):
         """Handle POST /strings/"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        value = serializer.validated_data["value"]
-
-        # Restrict to alphabetic strings only
-        if not value.isalpha():
+        # Check if 'value' field exists
+        if 'value' not in request.data:
             return Response(
-                {"error": "Only alphabetic strings are allowed."},
+                {"error": "Missing 'value' field"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate that value is a string
+        value = request.data.get('value')
+        if not isinstance(value, str):
+            return Response(
+                {"error": "Value must be a string"},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+        # Additional validation using serializer
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        value = serializer.validated_data["value"]
 
         # Check for duplicates
         if AnalyzedString.objects.filter(value=value).exists():
             return Response(
-                {"error": "String already exists."},
+                {"error": "String already exists in the system"},
                 status=status.HTTP_409_CONFLICT
             )
 
         # Compute properties
-        properties = {
-            "length": len(value),
-            "is_palindrome": value.lower() == value[::-1].lower(),
-            "unique_characters": len(set(value)),
-            "word_count": len(value.split()),
-            "sha256_hash": sha256(value.encode()).hexdigest(),
-            # "character_frequency_map": dict(Counter(value)),
-            "character_frequency_map": json.dumps(Counter(value)),
+        sha256_hash = sha256(value.encode()).hexdigest()
+        length = len(value)
+        is_palindrome = value.lower() == value[::-1].lower()
+        unique_characters = len(set(value))
+        word_count = len(value.split())
+        character_frequency_map = dict(Counter(value))
 
-        }
+        # Create the analyzed string
+        try:
+            analyzed_string = AnalyzedString.objects.create(
+                value=value,
+                length=length,
+                is_palindrome=is_palindrome,
+                unique_characters=unique_characters,
+                word_count=word_count,
+                sha256_hash=sha256_hash,
+                character_frequency_map=character_frequency_map,
+            )
 
-        analyzed_string = AnalyzedString.objects.create(
-            value=value,
-            length=properties["length"],
-            is_palindrome=properties["is_palindrome"],
-            unique_characters=properties["unique_characters"],
-            word_count=properties["word_count"],
-            sha256_hash=properties["sha256_hash"],
-            character_frequency_map=json.dumps(
-                properties["character_frequency_map"]),
-        )
+            response_data = {
+                "id": analyzed_string.sha256_hash,
+                "value": analyzed_string.value,
+                "properties": {
+                    "length": length,
+                    "is_palindrome": is_palindrome,
+                    "unique_characters": unique_characters,
+                    "word_count": word_count,
+                    "sha256_hash": sha256_hash,
+                    "character_frequency_map": character_frequency_map,
+                },
+                "created_at": analyzed_string.created_at,
+            }
 
-        response_data = {
-            "id": analyzed_string.sha256_hash,
-            "value": analyzed_string.value,
-            "properties": properties,
-            "created_at": analyzed_string.created_at,
-        }
+            return Response(response_data, status=status.HTTP_201_CREATED)
 
-        return Response(response_data, status=status.HTTP_201_CREATED)
-
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
 
 
 class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
-   
-    # GET /strings/{string_value} - Retrieve a specific string
-    # DELETE /strings/{string_value} - Delete a string
-  
+    """
+    GET /strings/{string_value} - Retrieve a specific string
+    DELETE /strings/{string_value} - Delete a string
+    """
     serializer_class = AnalyzedStringSerializer
     lookup_field = 'value'
     lookup_url_kwarg = 'string_value'
@@ -168,6 +185,7 @@ class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
             )
 
     def destroy(self, request, *args, **kwargs):
+        """Override destroy to return 204 No Content"""
         string_value = kwargs.get('string_value')
         obj = AnalyzedString.objects.filter(value=string_value).first()
 
@@ -178,11 +196,8 @@ class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
             )
 
         obj.delete()
-        return Response(
-            {"message": f"String '{string_value}' has been deleted successfully."},
-            status=status.HTTP_200_OK
-        )
-
+        # Return 204 No Content (empty response)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class NaturalLanguageFilterView(APIView):
@@ -211,39 +226,32 @@ class NaturalLanguageFilterView(APIView):
             filters['word_count'] = int(word_count_match.group(1))
 
         # Check for length conditions
-        # "longer than X characters"
         longer_match = re.search(
             r'(?:longer than|more than)\s+(\d+)', query_lower)
         if longer_match:
             filters['min_length'] = int(longer_match.group(1)) + 1
 
-        # "shorter than X characters"
         shorter_match = re.search(
             r'(?:shorter than|less than)\s+(\d+)', query_lower)
         if shorter_match:
             filters['max_length'] = int(shorter_match.group(1)) - 1
 
-        # "at least X characters"
         at_least_match = re.search(r'at least\s+(\d+)', query_lower)
         if at_least_match:
             filters['min_length'] = int(at_least_match.group(1))
 
-        # "at most X characters"
         at_most_match = re.search(r'at most\s+(\d+)', query_lower)
         if at_most_match:
             filters['max_length'] = int(at_most_match.group(1))
 
-        # Check for "contains letter/character X"
         contains_match = re.search(
-            r'contain(?:s|ing)?\s+(?:the\s+)?(?:letter|character)\s+([a-z])', query_lower, re.IGNORECASE)
+            r'contain(?:s|ing)?\s+(?:the\s+)?(?:letter|character)\s+([a-z])', query_lower)
         if contains_match:
             filters['contains_character'] = contains_match.group(1)
 
-        # Check for "first vowel" (a)
         if 'first vowel' in query_lower:
             filters['contains_character'] = 'a'
 
-        # Check for last vowel (u)
         if 'last vowel' in query_lower:
             filters['contains_character'] = 'u'
 
@@ -259,13 +267,12 @@ class NaturalLanguageFilterView(APIView):
             )
 
         try:
-            # Parse the natural language query
             parsed_filters = self.parse_natural_language(query)
 
             if not parsed_filters:
                 return Response(
                     {'error': 'Unable to parse natural language query'},
-                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
             # Apply filters to queryset
@@ -291,7 +298,6 @@ class NaturalLanguageFilterView(APIView):
                 queryset = queryset.filter(
                     value__icontains=parsed_filters['contains_character'])
 
-            # Serialize results
             serializer = StringListSerializer(queryset, many=True)
 
             return Response({
