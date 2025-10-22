@@ -56,27 +56,50 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # 🗄️ DATABASES — Local MySQL + Heroku Cloud Auto Switch
 # ============================================================
 
-if DEBUG:
-    # Local MySQL setup
+# if DEBUG:
+#     # Local MySQL setup
+#     DATABASES = {
+#         'default': {
+#             'ENGINE': 'django.db.backends.mysql',
+#             'NAME': config('DB_NAME', default='strings_db'),
+#             'USER': config('DB_USER', default='root'),
+#             'PASSWORD': config('DB_PASSWORD', default=''),
+#             'HOST': config('DB_HOST', default='127.0.0.1'),
+#             'PORT': config('DB_PORT', default='3306'),
+#         }
+#     }
+# else:
+#     # Production (Heroku)
+#     DATABASES = {
+#     'default': dj_database_url.config(
+#         default=config('DATABASE_URL'),
+#         conn_max_age=600,
+#         conn_health_checks=True,
+#     )
+# }
+
+if config('DEBUG', default=True, cast=bool):
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': config('DB_NAME', default='strings_db'),
-            'USER': config('DB_USER', default='root'),
-            'PASSWORD': config('DB_PASSWORD', default=''),
-            'HOST': config('DB_HOST', default='127.0.0.1'),
-            'PORT': config('DB_PORT', default='3306'),
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'HOST': config('DB_HOST'),
+            'PORT': config('DB_PORT'),
         }
     }
 else:
-    # Production (Heroku)
     DATABASES = {
-    'default': dj_database_url.config(
-        default=config('DATABASE_URL'),
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
-}
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'HOST': config('DB_HOST'),
+            'PORT': config('DB_PORT'),
+        }
+    }
 
 # ============================================================
 
