@@ -116,7 +116,9 @@ class StringListCreateView(generics.ListCreateAPIView):
             "unique_characters": len(set(value)),
             "word_count": len(value.split()),
             "sha256_hash": sha256(value.encode()).hexdigest(),
-            "character_frequency_map": dict(Counter(value)),
+            # "character_frequency_map": dict(Counter(value)),
+            "character_frequency_map": json.dumps(Counter(value)),
+
         }
 
         analyzed_string = AnalyzedString.objects.create(
@@ -171,12 +173,15 @@ class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
 
         if not obj:
             return Response(
-                {'error': 'String does not exist in the system'},
+                {"error": "String does not exist in the system"},
                 status=status.HTTP_404_NOT_FOUND
             )
 
         obj.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {"message": f"String '{string_value}' has been deleted successfully."},
+            status=status.HTTP_200_OK
+        )
 
 
 
