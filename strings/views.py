@@ -13,24 +13,31 @@ import hashlib
 
 
 
+from hashlib import sha256
+from collections import Counter
+import json
+
+
 class StringListCreateView(generics.ListCreateAPIView):
-   
-    # GET /strings - List all strings with optional filtering
-    # POST /strings - Create and analyze a new string
-   
-    serializer_class = AnalyzedStringSerializer
+    """
+    GET /strings - List all strings with filters
+    POST /strings - Create and analyze a new string
+    """
+
+    serializer_class = StringListSerializer
+    queryset = AnalyzedString.objects.all()
 
     def get_queryset(self):
         """Apply filters to queryset"""
         queryset = AnalyzedString.objects.all()
 
         # Get query parameters
-        is_palindrome = self.request.query_params.get('is_palindrome')
-        min_length = self.request.query_params.get('min_length')
-        max_length = self.request.query_params.get('max_length')
-        word_count = self.request.query_params.get('word_count')
-        contains_character = self.request.query_params.get(
-            'contains_character')
+        params = self.request.query_params
+        is_palindrome = params.get('is_palindrome')
+        min_length = params.get('min_length')
+        max_length = params.get('max_length')
+        word_count = params.get('word_count')
+        contains_character = params.get('contains_character')
 
         # Apply filters
         if is_palindrome is not None:
@@ -39,119 +46,98 @@ class StringListCreateView(generics.ListCreateAPIView):
             elif is_palindrome.lower() == 'false':
                 queryset = queryset.filter(is_palindrome=False)
 
-        if min_length:
-            try:
-                queryset = queryset.filter(length__gte=int(min_length))
-            except ValueError:
-                pass
-
-        if max_length:
-            try:
-                queryset = queryset.filter(length__lte=int(max_length))
-            except ValueError:
-                pass
-
-        if word_count:
-            try:
-                queryset = queryset.filter(word_count=int(word_count))
-            except ValueError:
-                pass
-
+        if min_length and min_length.isdigit():
+            queryset = queryset.filter(length__gte=int(min_length))
+        if max_length and max_length.isdigit():
+            queryset = queryset.filter(length__lte=int(max_length))
+        if word_count and word_count.isdigit():
+            queryset = queryset.filter(word_count=int(word_count))
         if contains_character and len(contains_character) == 1:
             queryset = queryset.filter(value__icontains=contains_character)
 
         return queryset
 
     def get_serializer_class(self):
-        """Use different serializers for list vs create"""
+        """Use different serializers for GET and POST"""
         if self.request.method == 'POST':
             return StringCreateSerializer
         return StringListSerializer
 
     def list(self, request, *args, **kwargs):
-        """Override list to add custom response format"""
+        """Override list to show custom response"""
         queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
 
-        # Collect applied filters
         filters_applied = {}
         params = request.query_params
 
         if params.get('is_palindrome'):
-            filters_applied['is_palindrome'] = params.get(
-                'is_palindrome').lower() == 'true'
+            filters_applied['is_palindrome'] = params['is_palindrome']
         if params.get('min_length'):
-            try:
-                filters_applied['min_length'] = int(params.get('min_length'))
-            except ValueError:
-                pass
+            filters_applied['min_length'] = params['min_length']
         if params.get('max_length'):
-            try:
-                filters_applied['max_length'] = int(params.get('max_length'))
-            except ValueError:
-                pass
+            filters_applied['max_length'] = params['max_length']
         if params.get('word_count'):
-            try:
-                filters_applied['word_count'] = int(params.get('word_count'))
-            except ValueError:
-                pass
+            filters_applied['word_count'] = params['word_count']
         if params.get('contains_character'):
-            char = params.get('contains_character')
-            if len(char) == 1:
-                filters_applied['contains_character'] = char
-
-        serializer = self.get_serializer(queryset, many=True)
+            filters_applied['contains_character'] = params['contains_character']
 
         return Response({
-            'data': serializer.data,
-            'count': queryset.count(),
-            'filters_applied': filters_applied
+            "data": serializer.data,
+            "count": queryset.count(),
+            "filters_applied": filters_applied
         })
 
+    def create(self, request, *args, **kwargs):
+        """Handle POST /strings/"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-def create(self, request, *args, **kwargs):
-    value = request.data.get("value")
+        value = serializer.validated_data["value"]
 
-    # 1️⃣ Missing field
-    if value is None:
-        return Response(
-            {"error": "'value' field is required."},
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY
+        # Restrict to alphabetic strings only
+        if not value.isalpha():
+            return Response(
+                {"error": "Only alphabetic strings are allowed."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        # Check for duplicates
+        if AnalyzedString.objects.filter(value=value).exists():
+            return Response(
+                {"error": "String already exists."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Compute properties
+        properties = {
+            "length": len(value),
+            "is_palindrome": value.lower() == value[::-1].lower(),
+            "unique_characters": len(set(value)),
+            "word_count": len(value.split()),
+            "sha256_hash": sha256(value.encode()).hexdigest(),
+            "character_frequency_map": dict(Counter(value)),
+        }
+
+        analyzed_string = AnalyzedString.objects.create(
+            value=value,
+            length=properties["length"],
+            is_palindrome=properties["is_palindrome"],
+            unique_characters=properties["unique_characters"],
+            word_count=properties["word_count"],
+            sha256_hash=properties["sha256_hash"],
+            character_frequency_map=json.dumps(
+                properties["character_frequency_map"]),
         )
 
-    # 2️⃣ Not a string
-    if not isinstance(value, str):
-        return Response(
-            {"error": "Invalid data type. 'value' must be a string."},
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY
-        )
+        response_data = {
+            "id": analyzed_string.sha256_hash,
+            "value": analyzed_string.value,
+            "properties": properties,
+            "created_at": analyzed_string.created_at,
+        }
 
-    # 3️⃣ Must contain only letters (no numbers, symbols, or empty)
-    if not value.isalpha():
-        return Response(
-            {"error": "Invalid value. String must contain only alphabetic characters (A-Z or a-z)."},
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY
-        )
-
-    # 4️⃣ Check duplicate by hash
-    sha256_hash = hashlib.sha256(value.encode()).hexdigest()
-    if AnalyzedString.objects.filter(sha256_hash=sha256_hash).exists():
-        return Response(
-            {"error": "String already exists in the system"},
-            status=status.HTTP_409_CONFLICT
-        )
-
-    # 5️⃣ Create new record
-    try:
-        analyzed_string = AnalyzedString(value=value)
-        analyzed_string.save()  # model handles calculations
-        response_serializer = AnalyzedStringSerializer(analyzed_string)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-
-    except Exception as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 
