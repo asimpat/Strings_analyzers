@@ -108,31 +108,23 @@ class StringListCreateView(generics.ListCreateAPIView):
         })
 
     def create(self, request, *args, **kwargs):
-        """Override create to handle validation and conflicts"""
-        value = request.data.get("value", None)
+        value = request.data.get("value")
 
-  
+    # 1️⃣ Missing value
         if value is None:
             return Response(
                 {"error": "'value' field is required."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
 
-       
+        # 2️⃣ Invalid data type
         if not isinstance(value, str):
             return Response(
                 {"error": "Invalid data type. 'value' must be a string."},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
 
-        serializer = self.get_serializer(data={"value": value})
-
-        if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+        # 3️⃣ Duplicate check
         sha256_hash = hashlib.sha256(value.encode()).hexdigest()
         if AnalyzedString.objects.filter(sha256_hash=sha256_hash).exists():
             return Response(
@@ -140,21 +132,20 @@ class StringListCreateView(generics.ListCreateAPIView):
                 status=status.HTTP_409_CONFLICT
             )
 
+        # 4️⃣ Create new record
         try:
             analyzed_string = AnalyzedString(value=value)
-            analyzed_string.save()
+            analyzed_string.save()  # model handles property calculations
 
             response_serializer = AnalyzedStringSerializer(analyzed_string)
-            return Response(
-                response_serializer.data,
-                status=status.HTTP_201_CREATED
-            )
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
         except Exception as e:
             return Response(
                 {"error": str(e)},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 
 class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
@@ -182,16 +173,21 @@ class StringRetrieveDestroyView(generics.RetrieveDestroyAPIView):
             )
 
     def destroy(self, request, *args, **kwargs):
-        """Override destroy to handle 404 properly"""
-        try:
-            instance = self.get_object()
-            instance.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except AnalyzedString.DoesNotExist:
+        string_value = kwargs.get('string_value')
+        obj = AnalyzedString.objects.filter(value=string_value).first()
+
+        if not obj:
             return Response(
                 {'error': 'String does not exist in the system'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        obj.delete()
+        return Response(
+            {'message': f"'{string_value}' deleted successfully."},
+            status=status.HTTP_200_OK
+        )
+
 
 
 class NaturalLanguageFilterView(APIView):
