@@ -107,56 +107,51 @@ class StringListCreateView(generics.ListCreateAPIView):
             'filters_applied': filters_applied
         })
 
-    def create(self, request, *args, **kwargs):
-        value = request.data.get("value")
 
-    # 1️⃣ Missing value
-        if value is None:
-            return Response(
-                {"error": "'value' field is required."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+def create(self, request, *args, **kwargs):
+    value = request.data.get("value")
 
-        # 2️⃣ Invalid data type
-        if not isinstance(value, str):
-            return Response(
-                {"error": "Invalid data type. 'value' must be a string."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+    # 1️⃣ Missing field
+    if value is None:
+        return Response(
+            {"error": "'value' field is required."},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
 
-        # 3️⃣ Clean up extra whitespace
-        value = value.strip()
-        if not value:
-            return Response(
-                {"error": "'value' cannot be empty."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+    # 2️⃣ Not a string
+    if not isinstance(value, str):
+        return Response(
+            {"error": "Invalid data type. 'value' must be a string."},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
 
-        # 4️⃣ Duplicate check
-        sha256_hash = hashlib.sha256(value.encode()).hexdigest()
-        if AnalyzedString.objects.filter(id=sha256_hash).exists():
-            return Response(
-                {"error": "String already exists in the system."},
-                status=status.HTTP_409_CONFLICT
-            )
+    # 3️⃣ Must contain only letters (no numbers, symbols, or empty)
+    if not value.isalpha():
+        return Response(
+            {"error": "Invalid value. String must contain only alphabetic characters (A-Z or a-z)."},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
 
-        try:
-            # Calculate all properties first
-            props = AnalyzedString.calculate_properties(value)
+    # 4️⃣ Check duplicate by hash
+    sha256_hash = hashlib.sha256(value.encode()).hexdigest()
+    if AnalyzedString.objects.filter(sha256_hash=sha256_hash).exists():
+        return Response(
+            {"error": "String already exists in the system"},
+            status=status.HTTP_409_CONFLICT
+        )
 
-            # Create and save object
-            analyzed_string = AnalyzedString.objects.create(value=value, **props)
+    # 5️⃣ Create new record
+    try:
+        analyzed_string = AnalyzedString(value=value)
+        analyzed_string.save()  # model handles calculations
+        response_serializer = AnalyzedStringSerializer(analyzed_string)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
-            response_serializer = AnalyzedStringSerializer(analyzed_string)
-            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            # Safer catch block
-            return Response(
-                {"error": f"Internal Server Error: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 
